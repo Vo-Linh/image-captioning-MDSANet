@@ -59,7 +59,7 @@ class ScaledDotProductAttention(nn.Module):
         nk = keys.shape[1]
 
         i, j = torch.meshgrid(torch.arange(7), torch.arange(7))
-        indexes = torch.stack([i.flatten(), j.flatten()]).cuda()
+        indexes = torch.stack([i.flatten(), j.flatten()]).cuda(1)
         R = torch.abs(indexes.transpose(0, 1).unsqueeze(-1) - indexes.unsqueeze(0)).sum(1)
         R = self.W * R.unsqueeze(0)
         V_ = self.V.expand_as(R)

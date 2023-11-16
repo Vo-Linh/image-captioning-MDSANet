@@ -1,0 +1,1 @@
+./dataset/VieCap4H/viecap4h-public-train/viecap4h-public-train/val_captions_dict.json

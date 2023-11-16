@@ -9,10 +9,18 @@ import h5py
 import os
 import warnings
 import shutil
+import pdb
+
+from fairseq.models.bart import BARTModel
+from underthesea import word_tokenize # Underthesea
+from vncorenlp import VnCoreNLP # VnCoreNLP
+from transformers import BertModel, BertTokenizer,  RobertaModel, PhobertTokenizer, AutoTokenizer
+# from . import ImageDetectionsField, TextField, RawField
 
 from .dataset import Dataset
 from .vocab import Vocab
 from .utils import get_tokenizer
+from importlib.machinery import SourceFileLoader
 
 
 class RawField(object):
@@ -104,18 +112,20 @@ class ImageDetectionsField(RawField):
         super(ImageDetectionsField, self).__init__(preprocessing, postprocessing)
 
     def preprocess(self, x, avoid_precomp=False):
-        image_id = int(x.split('_')[-1].split('.')[0])
+        image_id = str(x.split('/')[-1].split('.')[0])
         try:
-            f = h5py.File(self.detections_path, 'r')
-            precomp_data = f['%d_features' % image_id][()]
+            f_h5py = h5py.File(self.detections_path, 'r')
+            precomp_data = f_h5py[f'{image_id}_features'][()]
+            # precomp_data = f_h5py[f'{image_id}_grids'][()]
             if self.sort_by_prob:
                 precomp_data = precomp_data[np.argsort(np.max(f['%d_cls_prob' % image_id][()], -1))[::-1]]
         except KeyError:
-            warnings.warn('Could not find detections for %d' % image_id)
+            warnings.warn(f'Could not find detections for {image_id}')
             precomp_data = np.random.rand(10,2048)
 
         delta = self.max_detections - precomp_data.shape[0]
         if delta > 0:
+            #import pdb; pdb.set_trace()
             precomp_data = np.concatenate([precomp_data, np.zeros((delta, precomp_data.shape[1]))], axis=0)
         elif delta < 0:
             precomp_data = precomp_data[:self.max_detections]
@@ -157,7 +167,8 @@ class TextField(RawField):
         self.fix_length = fix_length
         self.dtype = dtype
         self.lower = lower
-        self.tokenize = get_tokenizer(tokenize)
+        self.tokenize = word_tokenize
+        #self.tokenize = get_tokenizer(tokenize)
         self.remove_punctuation = remove_punctuation
         self.include_lengths = include_lengths
         self.batch_first = batch_first
@@ -167,8 +178,17 @@ class TextField(RawField):
         self.truncate_first = truncate_first
         self.vocab = None
         self.vectors = vectors
+        self.phobert_tokenizer = PhobertTokenizer.from_pretrained("vinai/phobert-base")
+        self.hust_tokenizer = BertTokenizer.from_pretrained("NlpHUST/vibert4news-base-cased")
+       # self.envibert_tokenizer = SourceFileLoader("envibert.tokenizer", os.path.join(cache_dir,'./envibert_tokenizer.py')).load_module().RobertaTokenizer('./cache')
+       #self.word_tokenizer = AutoTokenizer.from_pretrained("vinai/bartpho-word", use_fast=False)
+        self.annotator = VnCoreNLP(address="http://127.0.0.1", port=9000)
+        #self.bartpho_encoder = BARTModel.from_pretrained('./data/fairseq-bartpho-syllable', checkpoint_file='model.pt', bpe='sentencepiece', sentencepiece_model='./data/fairseq-bartpho-syllable/sentence.bpe.model').eval()
+
         if nopoints:
             self.punctuations.append("..")
+        # self.text_field = TextField(init_token='<s>', eos_token='</s>', lower=True, tokenize='spacy', remove_punctuation=True, nopoints=False)
+        # self.text_field.vocab = pickle.load(open('vocab.pkl', 'rb'))
 
         super(TextField, self).__init__(preprocessing, postprocessing)
 
@@ -177,18 +197,71 @@ class TextField(RawField):
             x = six.text_type(x, encoding='utf-8')
         if self.lower:
             x = six.text_type.lower(x)
-        x = self.tokenize(x.rstrip('\n'))
+
+        # Underthesea
+        #x = self.tokenize(x.rstrip('\n'))
+        #x = [i.replace(' ', '_') for i in x]
+
+        #x = self.tokenize(x.rstrip('\n'))
+        #x = x.rstrip('\n').split(' ')
+        # print(x)
+        
+        # VNCoreNLP
+        #import pdb; pdb.set_trace()
+        x = self.annotator.tokenize(x.rstrip('\n'))[0]
+
         if self.remove_punctuation:
             x = [w for w in x if w not in self.punctuations]
+            
         if self.preprocessing is not None:
             return self.preprocessing(x)
         else:
             return x
 
     def process(self, batch, device=None):
+        sentences = []
+        
+        subwords, lens = [], [] # init subwords, lens
+        masks = [] # init masks
+        
+        # encode original batch
+        batch_tensor_berts = []
+        for sequence in batch:
+          tensor_bert = [[0]]
+          for token in sequence:
+              #t = self.tokenizer(token, return_tensors='pt').input_ids[0][1:-1].tolist()
+              #t = [self.hust_tokenizer.convert_tokens_to_ids(token)]
+              #t = self.phobert_tokenizer.encode(token)[1:-1]
+              t = [self.phobert_tokenizer.convert_tokens_to_ids(token)]
+              #t = self.bartpho_encoder.encode(token)[1:-1].tolist()
+              #t = [self.word_tokenizer.convert_tokens_to_ids(token)] 
+              if not t:
+                tensor_bert.append([3])
+              else:
+                tensor_bert.append(t)
+          tensor_bert.append([2])
+          batch_tensor_berts.append(tensor_bert)
+
         padded = self.pad(batch)
         tensor = self.numericalize(padded, device=device)
-        return tensor
+
+        max_len = max([len(sum(x, [])) for x in batch_tensor_berts]) # max len of sentences in paded
+        ori_max_len = tensor.shape[1]
+
+        for tensor_bert in batch_tensor_berts:
+            subword = sum(tensor_bert, []) # flatten
+            masks.append([1]*len(subword) + [0]*(max_len-len(subword)))
+            subword = subword + [1]*(max_len-len(subword)) # fill
+            #masks.append([1]*len(subword))
+            subwords.append(subword) # add
+            lens.append([len(piece) for piece in tensor_bert] + [0]*(ori_max_len-len(tensor_bert))) # lens of ids per token
+
+        lens = torch.tensor(lens).to(device)
+        subwords = torch.tensor(subwords).to(device)
+        masks = torch.tensor(masks).to(device)
+        masks = masks.gt(0)
+
+        return tensor, subwords, masks, lens
 
     def build_vocab(self, *args, **kwargs):
         counter = Counter()

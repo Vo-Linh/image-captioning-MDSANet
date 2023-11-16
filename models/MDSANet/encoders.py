@@ -5,7 +5,7 @@ from torch import nn
 from .ds_attention import MultiHeadAttention
 
 class EncoderLayer(nn.Module):
-    def __init__(self, d_model=512, d_k=64, d_v=64, h=8, d_ff=2048, dropout=.1, M=3, p=0.4, identity_map_reordering=False,
+    def __init__(self, d_model=512, d_k=64, d_v=64, h=8, d_ff=768, dropout=.1, M=3, p=0.4, identity_map_reordering=False,
                  attention_module=None, attention_module_kwargs=None):
         super(EncoderLayer, self).__init__()
         self.M = M
@@ -41,7 +41,7 @@ class EncoderLayer(nn.Module):
 
 
 class MultiLevelEncoder(nn.Module):
-    def __init__(self, N, padding_idx, d_model=512, d_k=64, d_v=64, h=8, d_ff=2048, dropout=.1, M=3, p=0.4,
+    def __init__(self, N, padding_idx, d_model=512, d_k=64, d_v=64, h=8, d_ff=768, dropout=.1, M=3, p=0.4,
                  identity_map_reordering=False, attention_module=None, attention_module_kwargs=None):
         super(MultiLevelEncoder, self).__init__()
         self.d_model = d_model
@@ -65,7 +65,7 @@ class MultiLevelEncoder(nn.Module):
 
 
 class TransformerEncoder(MultiLevelEncoder):
-    def __init__(self, N, padding_idx, d_in=2048, **kwargs):
+    def __init__(self, N, padding_idx, d_in=768, **kwargs):
         super(TransformerEncoder, self).__init__(N, padding_idx, **kwargs)
         self.fc = nn.Linear(d_in, self.d_model)
         self.dropout = nn.Dropout(p=self.dropout)
@@ -73,6 +73,7 @@ class TransformerEncoder(MultiLevelEncoder):
 
     def forward(self, input, attention_weights=None):
         mask = (torch.sum(input, dim=-1) == 0).unsqueeze(-1)
+
         out = F.relu(self.fc(input))
         out = self.dropout(out)
         out = self.layer_norm(out)
