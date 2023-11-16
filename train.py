@@ -161,7 +161,7 @@ def train_scst(model, dataloader, optim, cider, text_field):
 
 
 if __name__ == '__main__':
-    device = torch.device('cuda:1')
+    device = torch.device('cuda')
     parser = argparse.ArgumentParser(description='MDSANet')
     parser.add_argument('--exp_name', type=str, default='MDSANet')
     parser.add_argument('--batch_size', type=int, default=50)
